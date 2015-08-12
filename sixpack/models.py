@@ -26,7 +26,9 @@ class Experiment(object):
         winner=False,
         traffic_fraction=False,
         redis=None,
-        weights=None):
+        weights=None,
+        limit=None,
+        limit_left=None):
 
         if len(alternatives) < 2:
             raise ValueError('experiments require at least two alternatives')
@@ -44,6 +46,14 @@ class Experiment(object):
         self.alternatives = self.initialize_alternatives(alternatives)
         self.kpi = None
         self.weights = weights
+        if limit:
+            limit = int(limit)
+            if not limit_left:
+                limit_left = limit
+        if limit_left:
+            limit_left = int(limit_left)
+        self.limit = limit
+        self.limit_left = limit_left
 
         # False here is a sentinal value for "not looked up yet"
         self._winner = winner
@@ -103,6 +113,7 @@ class Experiment(object):
                 pipe.lpush("{0}:alternatives:weights".format(self.key()), self.weights[len(self.weights) - 1 - index])
 
         pipe.execute()
+        self.save_limit()
 
     @property
     def control(self):
@@ -360,10 +371,25 @@ class Experiment(object):
             self.exclude_client(client)
             return self.control, False
 
+        if self.limit and self.limit_left == 0:
+            self.exclude_client(client)
+            return self.control, False
+
+        if self.limit and self.limit_left:
+            self.limit_left -= 1
+            self.save_limit()
+
         if self.weights:
             return self._weighted_choice(client), True
 
         return self._uniform_choice(client), True
+
+    def save_limit(self):
+        if self.limit:
+            pipe = self.redis.pipeline()
+            pipe.hset(self.key(), 'limit', self.limit)
+            pipe.hset(self.key(), 'limit:left', self.limit_left)
+            pipe.execute()
 
     def _weighted_choice(self, client):
         # Ported from https://github.com/facebook/planout/blob/master/python/planout/ops/random.py#L89
@@ -434,13 +460,16 @@ class Experiment(object):
         return cls(experiment_name,
                    Experiment.load_alternatives(experiment_name, redis),
                    redis=redis,
-                   weights=Experiment.load_weights(experiment_name, redis))
+                   weights=Experiment.load_weights(experiment_name, redis),
+                   limit=Experiment.load_limit(experiment_name, redis),
+                   limit_left=Experiment.load_limit_left(experiment_name, redis))
 
     @classmethod
     def find_or_create(cls, experiment_name, alternatives,
         traffic_fraction=None,
         redis=None,
-        weights=None):
+        weights=None,
+        limit=None):
 
         if len(alternatives) < 2:
             raise ValueError('experiments require at least two alternatives')
@@ -450,7 +479,7 @@ class Experiment(object):
             experiment = Experiment.find(experiment_name, redis=redis)
             is_update = True
         except ValueError:
-            experiment = cls(experiment_name, alternatives, redis=redis, weights=weights)
+            experiment = cls(experiment_name, alternatives, redis=redis, weights=weights, limit=limit)
 
             if traffic_fraction is None:
                 traffic_fraction = 1
@@ -465,6 +494,9 @@ class Experiment(object):
 
         if is_update and weights != experiment.weights:
             raise ValueError('do not change weights once a test has started, please delete in admin!')
+
+        if is_update and limit != experiment.limit:
+            raise ValueError('do not change limit once a test hast started, please delete in admin!')
 
         # Make sure the alternative options are correct. If they are not,
         # raise an error.
@@ -508,6 +540,16 @@ class Experiment(object):
         if weights:
             weights = map(float, weights)
         return weights
+
+    @staticmethod
+    def load_limit(experiment_name, redis=None):
+        key = _key("e:{0}".format(experiment_name))
+        return redis.hget(key, 'limit')
+
+    @staticmethod
+    def load_limit_left(experiment_name, redis=None):
+        key = _key("e:{0}".format(experiment_name))
+        return redis.hget(key, 'limit:left')
 
     @staticmethod
     def is_valid(experiment_name):

@@ -133,6 +133,9 @@ class Sixpack(object):
         weights = map(float, request.args.getlist('weights'))
         if not weights:
             weights = None
+        limit = request.args.get('limit')
+        if limit:
+            limit = int(limit)
 
         if client_id is None or experiment_name is None or alts is None:
             return json_error({'message': 'missing arguments'}, request, 400)
@@ -152,7 +155,7 @@ class Sixpack(object):
                 alt = participate(experiment_name, alts, client_id,
                                   force=force, traffic_fraction=traffic_fraction,
                                   prefetch=prefetch, datetime=dt, redis=self.redis,
-                                  weights=weights)
+                                  weights=weights, limit=limit)
             except ValueError as e:
                 return json_error({'message': str(e)}, request, 400)
 

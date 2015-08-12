@@ -8,9 +8,10 @@ def participate(experiment, alternatives, client_id,
     prefetch=False,
     datetime=None,
     redis=None,
-    weights=None):
+    weights=None,
+    limit=None):
 
-    exp = Experiment.find_or_create(experiment, alternatives, traffic_fraction=traffic_fraction, redis=redis, weights=weights)
+    exp = Experiment.find_or_create(experiment, alternatives, traffic_fraction=traffic_fraction, redis=redis, weights=weights, limit=limit)
 
     alt = None
     if force and force in alternatives:

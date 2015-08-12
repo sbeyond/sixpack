@@ -206,10 +206,12 @@ class Experiment(object):
         name = self.name
         desc = self.description
         alts = self.get_alternative_names()
+        weights = self.weights
+        limit = self.limit
 
         self.delete()
 
-        experiment = Experiment(name, alts, redis=self.redis)
+        experiment = Experiment(name, alts, redis=self.redis, weights=weights, limit=self.limit)
         experiment.update_description(desc)
         experiment.save()
 

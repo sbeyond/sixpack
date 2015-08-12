@@ -130,6 +130,9 @@ class Sixpack(object):
         if traffic_fraction is not None:
             traffic_fraction = float(traffic_fraction)
         prefetch = to_bool(request.args.get('prefetch', 'false'))
+        weights = map(float, request.args.getlist('weights'))
+        if not weights:
+            weights = None
 
         if client_id is None or experiment_name is None or alts is None:
             return json_error({'message': 'missing arguments'}, request, 400)
@@ -148,7 +151,8 @@ class Sixpack(object):
             try:
                 alt = participate(experiment_name, alts, client_id,
                                   force=force, traffic_fraction=traffic_fraction,
-                                  prefetch=prefetch, datetime=dt, redis=self.redis)
+                                  prefetch=prefetch, datetime=dt, redis=self.redis,
+                                  weights=weights)
             except ValueError as e:
                 return json_error({'message': str(e)}, request, 400)
 

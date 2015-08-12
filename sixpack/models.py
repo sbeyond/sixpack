@@ -25,15 +25,25 @@ class Experiment(object):
     def __init__(self, name, alternatives,
         winner=False,
         traffic_fraction=False,
-        redis=None):
+        redis=None,
+        weights=None):
 
         if len(alternatives) < 2:
             raise ValueError('experiments require at least two alternatives')
+
+        if weights:
+            if len(alternatives) != len(weights):
+                raise ValueError('experiments require same number of alternatives and weights')
+            sum_weights = sum(weights)
+            epsilion = 0.0001
+            if abs(sum_weights - 1.0) > epsilion:
+                raise ValueError('experiment\'s weight sums must be equal to 1')
 
         self.name = name
         self.redis = redis
         self.alternatives = self.initialize_alternatives(alternatives)
         self.kpi = None
+        self.weights = weights
 
         # False here is a sentinal value for "not looked up yet"
         self._winner = winner
@@ -87,8 +97,10 @@ class Experiment(object):
         pipe.hset(self.key(), 'traffic_fraction', self._traffic_fraction)
 
         # reverse here and use lpush to keep consistent with using lrange
-        for alternative in reversed(self.alternatives):
+        for index, alternative in enumerate(reversed(self.alternatives)):
             pipe.lpush("{0}:alternatives".format(self.key()), alternative.name)
+            if self.weights:
+                pipe.lpush("{0}:alternatives:weights".format(self.key()), self.weights[len(self.weights) - 1 - index])
 
         pipe.execute()
 
@@ -348,7 +360,32 @@ class Experiment(object):
             self.exclude_client(client)
             return self.control, False
 
+        if self.weights:
+            return self._weighted_choice(client), True
+
         return self._uniform_choice(client), True
+
+    def _weighted_choice(self, client):
+        # Ported from https://github.com/facebook/planout/blob/master/python/planout/ops/random.py#L89
+        choices = self.alternatives
+        weights = self.weights
+
+        if len(choices) ==  0:
+            return None
+
+        cum_weights = dict(enumerate(weights))
+        cum_sum = 0.0
+        for index in cum_weights:
+            cum_sum += cum_weights[index]
+            cum_weights[index] = cum_sum
+        stop_value = self._get_uniform(client, min_val=0.0, max_val=cum_sum)
+        for index in cum_weights:
+            if stop_value <= cum_weights[index]:
+                return choices[index]
+
+    def _get_uniform(self, client, min_val=0.0, max_val=1.0):
+        zero_to_one = self._get_hash(client) / float(0xFFFFFFF)
+        return min_val + (max_val - min_val) * zero_to_one
 
     # Ported from https://github.com/facebook/planout/blob/master/planout/ops/random.py
     def _uniform_choice(self, client):
@@ -396,12 +433,14 @@ class Experiment(object):
 
         return cls(experiment_name,
                    Experiment.load_alternatives(experiment_name, redis),
-                   redis=redis)
+                   redis=redis,
+                   weights=Experiment.load_weights(experiment_name, redis))
 
     @classmethod
     def find_or_create(cls, experiment_name, alternatives,
         traffic_fraction=None,
-        redis=None):
+        redis=None,
+        weights=None):
 
         if len(alternatives) < 2:
             raise ValueError('experiments require at least two alternatives')
@@ -411,7 +450,7 @@ class Experiment(object):
             experiment = Experiment.find(experiment_name, redis=redis)
             is_update = True
         except ValueError:
-            experiment = cls(experiment_name, alternatives, redis=redis)
+            experiment = cls(experiment_name, alternatives, redis=redis, weights=weights)
 
             if traffic_fraction is None:
                 traffic_fraction = 1
@@ -423,6 +462,9 @@ class Experiment(object):
         # only check traffic fraction if the experiment is being updated and the traffic fraction actually changes
         if is_update and traffic_fraction is not None and experiment.traffic_fraction != traffic_fraction:
             raise ValueError('do not change traffic fraction once a test has started. please delete in admin!')
+
+        if is_update and weights != experiment.weights:
+            raise ValueError('do not change weights once a test has started, please delete in admin!')
 
         # Make sure the alternative options are correct. If they are not,
         # raise an error.
@@ -456,6 +498,16 @@ class Experiment(object):
     def load_alternatives(experiment_name, redis=None):
         key = _key("e:{0}:alternatives".format(experiment_name))
         return redis.lrange(key, 0, -1)
+
+    @staticmethod
+    def load_weights(experiment_name, redis=None):
+        key = _key("e:{0}:alternatives:weights".format(experiment_name))
+        weights = redis.lrange(key, 0, -1)
+        if not weights:
+            weights = None
+        if weights:
+            weights = map(float, weights)
+        return weights
 
     @staticmethod
     def is_valid(experiment_name):

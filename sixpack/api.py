@@ -9,12 +9,13 @@ def participate(experiment, alternatives, client_id,
     datetime=None,
     redis=None,
     weights=None,
-    limit=None):
+    limit=None,
+    keep_in_exp=None):
 
     exp = Experiment.find_or_create(experiment, alternatives, traffic_fraction=traffic_fraction, redis=redis, weights=weights, limit=limit)
 
     alt = None
-    if force and force in alternatives:
+    if force and force in alternatives and not keep_in_exp:
         alt = Alternative(force, exp, redis=redis)
     elif not cfg.get('enabled', True):
         alt = exp.control
@@ -22,7 +23,7 @@ def participate(experiment, alternatives, client_id,
         alt = exp.winner
     else:
         client = Client(client_id, redis=redis)
-        alt = exp.get_alternative(client, dt=datetime, prefetch=prefetch)
+        alt = exp.get_alternative(client, dt=datetime, prefetch=prefetch, force=force)
 
     return alt
 

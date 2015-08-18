@@ -322,7 +322,7 @@ class Experiment(object):
             self._sequential_ids[client.client_id] = id_
         return self._sequential_ids[client.client_id]
 
-    def get_alternative(self, client, dt=None, prefetch=False):
+    def get_alternative(self, client, dt=None, prefetch=False, force=None):
         """Returns and records an alternative according to the following
         precedence:
           1. An existing alternative
@@ -336,7 +336,7 @@ class Experiment(object):
 
         chosen_alternative = self.existing_alternative(client)
         if not chosen_alternative:
-            chosen_alternative, participate = self.choose_alternative(client)
+            chosen_alternative, participate = self.choose_alternative(client, force=force)
             if participate and not prefetch:
                 chosen_alternative.record_participation(client, dt=dt)
 
@@ -367,7 +367,12 @@ class Experiment(object):
 
         return None
 
-    def choose_alternative(self, client):
+    def choose_alternative(self, client, force=None):
+        if force:
+            for alt in self.alternatives:
+                if alt.name == force:
+                    return alt, True
+
         rnd = random.random()
         if rnd >= self.traffic_fraction:
             self.exclude_client(client)
